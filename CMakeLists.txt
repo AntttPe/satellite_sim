@@ -18,7 +18,7 @@ set(APP_SOURCES
     src/main.cpp
     src/tasks/sensor_task.cpp
     src/tasks/telemetry_task.cpp
-    src/tasks/watchdog_task.cpp
+    src/tasks/watchdog_task.cpp src/tasks/orbit_task.cpp
 )
 
 add_executable(satellite_sim
