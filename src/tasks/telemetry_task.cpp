@@ -4,68 +4,125 @@
 #include "queue.h"
 
 #include <iostream>
-#include <iomanip>    // std::fixed, std::setprecision — formatowanie liczb
-#include <cstdio>     // printf — czasem czytelniejsze niż cout
+#include <iomanip>
 
 namespace Satellite {
 
 void vTelemetryTask(void* pvParameters) {
-    QueueHandle_t telemetry_queue = reinterpret_cast<QueueHandle_t>(pvParameters);
+
+    // ── Rozpakuj parametry ze struktury ──────────────────
+    // static_cast zamiast reinterpret_cast — bezpieczniejsze,
+    // kompilator sprawdza czy typy są kompatybilne.
+    // reinterpret_cast = "ufaj mi, wiem co robię" — używaj tylko
+    // gdy MUSISZ (np. hardware registers). Tu mamy zwykły void*.
+    TelemetryTaskParams* params = static_cast<TelemetryTaskParams*>(pvParameters);
+    QueueHandle_t sensor_queue  = params->sensor_queue;
+    QueueHandle_t orbit_queue   = params->orbit_queue;
+    QueueHandle_t laser_queue   = params->laser_queue;
 
     std::cout << "[TELEM] Task wystartował" << std::endl;
 
-    // Lokalny licznik pakietów — static NIE jest tu potrzebny
-    // bo zmienna żyje cały czas razem z taskiem (while true nigdy nie kończy)
     uint32_t packet_id = 0;
 
-    // SensorData na stosie taska — tu będziemy odbierać dane z kolejki
-    // Ważne: struct jest na stosie (stack), nie na stercie (heap)
-    // Stack = szybki, automatycznie zwalniany, ale ograniczony rozmiar
-    // Heap  = wolniejszy, ręcznie zarządzany (new/delete), nieograniczony
-    SensorData received_data;
+    // ── Bufory na dane z kolejek ──────────────────────────
+    // Każda struktura żyje na stosie taska (512 słów = ok 2KB na arm64)
+    // Łączny rozmiar buforów: SensorData + OrbitData + LaserLinkData
+    // to ok. 100 bajtów — bezpiecznie mieści się na stosie
+    SensorData   sensor;
+    OrbitData    orbit;
+    LaserLinkData laser;
+
+    // Flagi — czy mamy już dane z każdego źródła
+    // Zaczynamy bez danych, czekamy aż wszystkie taski wyślą pierwsze pakiety
+    bool has_orbit = false;
+    bool has_laser = false;
 
     while (true) {
-        // xQueueReceive(kolejka, bufor_na_dane, timeout)
-        // portMAX_DELAY = czekaj w nieskończoność aż pojawi się dane
-        // Task jest w stanie Blocked — nie zużywa CPU!
-        // Gdy SensorTask wrzuci pakiet → kernel obudzi TelemetryTask
-        BaseType_t received = xQueueReceive(
-            telemetry_queue,
-            &received_data,      // wskaźnik do bufora — kernel skopiuje tu dane
-            portMAX_DELAY        // czekaj bez limitu
-        );
 
-        if (received != pdTRUE) {
-            // To nie powinno się zdarzyć przy portMAX_DELAY
-            // ale dobry kod zawsze sprawdza wartości zwracane
-            continue;
+        // ── Czekaj na dane z SensorTask (blokująco) ──────
+        // portMAX_DELAY = task śpi aż coś przyjdzie — zero CPU waste.
+        // To GŁÓWNE źródło — takt całego TelemetryTask.
+        // SensorTask wysyła co 100ms → TelemetryTask budzi się co 100ms.
+        BaseType_t received = xQueueReceive(sensor_queue, &sensor, portMAX_DELAY);
+        if (received != pdTRUE) continue;
+
+        // ── Nieblokująco sprawdź orbit_queue ─────────────
+        // 0 jako timeout = "sprawdź czy jest coś teraz, jeśli nie — idź dalej"
+        // Nie chcemy CZEKAĆ na orbit (update co 1s) bo zablokowałoby
+        // cały TelemetryTask na 1s zamiast działać co 100ms.
+        //
+        // WAŻNA LEKCJA: xQueueReceive z timeout=0 to "peek bez blokowania"
+        // Używaj gdy dane są opcjonalne lub mają inną częstotliwość.
+        if (xQueueReceive(orbit_queue, &orbit, 0) == pdTRUE) {
+            has_orbit = true;
+        }
+
+        // ── Nieblokująco sprawdź laser_queue ─────────────
+        if (xQueueReceive(laser_queue, &laser, 0) == pdTRUE) {
+            has_laser = true;
         }
 
         ++packet_id;
 
-        // ── Określ status systemu ─────────────────────────
-        // Operator trójargumentowy: warunek ? wartość_true : wartość_false
-        // Nowoczesny C++ — zwięzły zapis zamiast if/else dla prostych przypadków
-        const char* status_str = (received_data.temperature > 70.0f)  ? "WARNING-TEMP" :
-                                 (received_data.temperature < -30.0f) ? "WARNING-COLD" :
-                                                                         "OK";
+        // ── Status systemu ────────────────────────────────
+        const char* status_str =
+            (sensor.temperature > 70.0f)  ? "WARNING-TEMP" :
+            (sensor.temperature < -30.0f) ? "WARNING-COLD" :
+            (has_laser && !laser.link_active) ? "WARNING-LASER" :
+                                               "OK";
 
-        // ── Wydrukuj pakiet telemetryczny ─────────────────
-        // std::fixed + std::setprecision = zawsze 2 miejsca po przecinku
-        // std::setw = minimalna szerokość pola (wyrównanie kolumn)
-        std::cout << "\n[TELEM] ═══ Packet #" << packet_id << " ═══" << std::endl;
+        // ── Drukuj co 10 pakietów orbit + laser ──────────
+        // Sensor wysyła co 100ms = 10 razy na sekundę.
+        // Orbit update co 1s — drukujemy go przy każdym 10. pakiecie
+        // żeby nie zaśmiecać konsoli ale pokazać że działa.
+        bool print_full = (packet_id % 10 == 0);
+
+        std::cout << "\n[TELEM] ═══ Packet #" << packet_id << " ═══\n";
         std::cout << std::fixed << std::setprecision(3);
-        std::cout << "  Timestamp : " << received_data.timestamp_ms << " ms" << std::endl;
-        std::cout << "  Status    : " << status_str << std::endl;
-        std::cout << "  Temp      : " << received_data.temperature  << " °C" << std::endl;
+        std::cout << "  Timestamp : " << sensor.timestamp_ms << " ms\n";
+        std::cout << "  Status    : " << status_str           << "\n";
+        std::cout << "  Temp      : " << sensor.temperature   << " °C\n";
         std::cout << "  Gyro  XYZ : "
-                  << received_data.gyro_x << " | "
-                  << received_data.gyro_y << " | "
-                  << received_data.gyro_z << " deg/s" << std::endl;
+                  << sensor.gyro_x  << " | "
+                  << sensor.gyro_y  << " | "
+                  << sensor.gyro_z  << " deg/s\n";
         std::cout << "  Accel XYZ : "
-                  << received_data.accel_x << " | "
-                  << received_data.accel_y << " | "
-                  << received_data.accel_z << " m/s²" << std::endl;
+                  << sensor.accel_x << " | "
+                  << sensor.accel_y << " | "
+                  << sensor.accel_z << " m/s²\n";
+
+        if (print_full && has_orbit) {
+            std::cout << std::fixed << std::setprecision(4);
+            std::cout << "  ── Orbit ──────────────────────────\n";
+            std::cout << "  Lat/Lon   : "
+                      << orbit.latitude  << "° / "
+                      << orbit.longitude << "°\n";
+            std::cout << "  Altitude  : "
+                      << std::setprecision(1) << orbit.altitude_km << " km\n";
+            std::cout << "  Velocity  : "
+                      << (int)orbit.velocity_ms << " m/s\n";
+            std::cout << "  Anomaly   : "
+                      << std::setprecision(2) << orbit.true_anomaly << "°\n";
+        }
+
+        if (print_full && has_laser) {
+            std::cout << "  ── Laser Link ─────────────────────\n";
+            std::cout << "  Link      : "
+                      << (laser.link_active ? "ACTIVE" : "DOWN") << "\n";
+            if (laser.link_active) {
+                std::cout << "  Signal    : "
+                          << std::setprecision(1) << laser.signal_strength << " dBm\n";
+                std::cout << "  Atm.Loss  : "
+                          << laser.atmospheric_loss << " dB\n";
+                std::cout << "  Ping      : " << laser.ping_ms << " ms\n";
+
+                // ── Formatowanie BER w notacji naukowej ──
+                // BER to bardzo mała liczba (np. 1e-9)
+                // printf z %e daje notację naukową: 1.000e-09
+                // cout nie ma prostego odpowiednika — printf jest tu czytelniejszy
+                printf("  BER       : %.3e\n", laser.bit_error_rate);
+            }
+        }
     }
 }
 

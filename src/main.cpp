@@ -91,12 +91,14 @@ int main() {
                 2,              // priorytet
                 nullptr);       // uchwyt taska — nullptr jeśli nie potrzebujemy
 
-    xTaskCreate(Satellite::vTelemetryTask,
-                "TelemTask",
-                512,
-                telemetry_queue,// TelemetryTask czyta z tej samej kolejki
-                1,
-                nullptr);
+    static Satellite::TelemetryTaskParams telem_params = {
+        .sensor_queue = telemetry_queue,
+        .orbit_queue  = orbit_queue,
+        .laser_queue  = laser_queue
+    };
+
+    xTaskCreate(Satellite::vTelemetryTask, "TelemTask", 1024,
+                &telem_params, 1, nullptr);
 
     xTaskCreate(Satellite::vWatchdogTask,
                 "Watchdog",
