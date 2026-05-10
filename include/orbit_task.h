@@ -7,15 +7,26 @@
 
 namespace Satellite {
 
+    // ── OrbitTask params — teraz z dwoma kolejkami ────────
     struct OrbitTaskParams {
-        QueueHandle_t output_queue;   // tu wysyłamy OrbitData
-        SimConditions* conditions;    // wskaźnik na warunki sim (shared)
+        QueueHandle_t output_queue;  // → TelemetryTask
+        QueueHandle_t socket_queue;  // → SocketSender (nowe!)
+        SimConditions* conditions;   // wskaźnik na warunki sim
     };
 
+    // ── LaserTask params — fan-out jak SensorTask ─────────
+    // LaserTask był wcześniej bez struktury (dostawał jedną kolejkę).
+    // Teraz musi pisać do dwóch — potrzebuje struktury.
+    struct LaserTaskParams {
+        QueueHandle_t telem_queue;   // → TelemetryTask
+        QueueHandle_t socket_queue;  // → SocketSender
+    };
+
+    // extern = "ta zmienna istnieje w orbit_task.cpp"
+    // Bez extern każdy plik który include'uje ten header
+    // tworzyłby własną kopię — błąd linkera "multiple definition"
     extern SimConditions g_sim_conditions;
 
-    // Oblicza prędkość orbitalną z prawa Keplera: v = sqrt(mu / r)
-    // Zwraca [m/s]. Im niżej orbita, tym szybciej satelita leci.
     double calculateOrbitalVelocity(double altitude_km);
 
     void trueAnomalyToLatLon(double true_anomaly_deg,
@@ -24,7 +35,7 @@ namespace Satellite {
                              double& lon_out);
 
     void vOrbitTask(void* pvParameters);
-    void vLaserTask(void* pvParameters);  // osobny task dla łącza
+    void vLaserTask(void* pvParameters);
 
 } // namespace Satellite
 

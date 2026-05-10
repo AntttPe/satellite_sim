@@ -2,20 +2,27 @@
 #define SENSOR_TASK_H
 
 #include "FreeRTOS.h"
-#include "queue.h"               // QueueHandle_t
+#include "queue.h"
 #include "common_types.h"
 
 namespace Satellite {
 
-    // Deklaracja funkcji taska — implementacja będzie w sensor_task.cpp
-    // void* pvParameters — klasyczny sposób przekazywania parametrów do tasków FreeRTOS
-    // (FreeRTOS jest w C, nie zna szablonów C++)
-    void vSensorTask(void* pvParameters);
+    // ── Nowa struktura parametrów ─────────────────────────
+    // SensorTask musi pisać do DWÓCH kolejek jednocześnie:
+    //   telem_queue  → TelemetryTask (wyświetlanie w konsoli)
+    //   socket_queue → SocketSender  (wysyłanie JSON do Python)
+    //
+    // To pattern "fan-out" — jeden producent, wielu odbiorców.
+    // Alternatywa to event bus ale w FreeRTOS queue fan-out
+    // jest prostszy i bardziej przewidywalny pamięciowo.
+    struct SensorTaskParams {
+        QueueHandle_t telem_queue;   // → TelemetryTask
+        QueueHandle_t socket_queue;  // → SocketSender
+    };
 
-    // Funkcja pomocnicza — generuje realistyczne dane z szumem
-    // Poznasz tu: parametry by reference, losowość w C++
+    void vSensorTask(void* pvParameters);
     SensorData generateSensorReading(uint32_t timestamp_ms);
 
 } // namespace Satellite
 
-#endif // SENSOR_TASK_H
+#endif

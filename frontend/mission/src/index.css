@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", Consolas, monospace;
+  --font-sans: ui-sans-serif, system-ui, "Inter", sans-serif;
+
+  --color-hud-bg: #050709;
+  --color-hud-panel: #0b0f14;
+  --color-hud-panel-2: #11161d;
+  --color-hud-border: #1c2530;
+  --color-hud-grid: #122031;
+  --color-hud-fg: #c8d6e5;
+  --color-hud-fg-dim: #6b7d8f;
+  --color-hud-cyan: #22d3ee;
+  --color-hud-green: #4ade80;
+  --color-hud-amber: #fbbf24;
+  --color-hud-red: #ef4444;
+  --color-hud-violet: #a78bfa;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-hud-bg);
+  color: var(--color-hud-fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-image:
+    radial-gradient(ellipse 80% 60% at 50% -20%, rgba(34, 211, 238, 0.08), transparent),
+    linear-gradient(180deg, #050709 0%, #02030a 100%);
+}
+
+/* Skan-line CRT vibe */
+.hud-scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.015) 0px,
+    rgba(255, 255, 255, 0.015) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+}
+
+@keyframes hud-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+.hud-pulse {
+  animation: hud-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes hud-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.hud-blink {
+  animation: hud-blink 1s steps(1) infinite;
+}
